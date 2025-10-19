@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timelapse Matcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            margin-bottom: 30px;
+            color: #333;
+        }
+        
+        .step {
+            margin-bottom: 30px;
+            padding-bottom: 30px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .step:last-child {
+            border-bottom: none;
+        }
+        
+        .step-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background: #0051D5;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .file-label {
+            display: inline-block;
+            background: #007AFF;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        .file-label:hover {
+            background: #0051D5;
+        }
+        
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 4px;
+            background: #f0f0f0;
+            color: #555;
+        }
+        
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .preview-img {
+            width: 100%;
+            height: 120px;
+            object-fit: cover;
+            border-radius: 4px;
+            border: 2px solid #ddd;
+        }
+        
+        .reference-preview {
+            max-width: 300px;
+            margin-top: 15px;
+            border-radius: 4px;
+            border: 2px solid #007AFF;
+        }
+        
+        .slider-container {
+            margin-top: 15px;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            margin-top: 10px;
+        }
+        
+        .output {
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        #outputGif {
+            max-width: 100%;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📸 Timelapse Matcher</h1>
+        
+        <div class="step">
+            <div class="step-title">Step 1: Upload Reference Image</div>
+            <p style="margin-bottom: 15px; color: #666;">Upload one photo of your vine wall to use as reference</p>
+            <label for="referenceInput" class="file-label">Choose Reference Photo</label>
+            <input type="file" id="referenceInput" accept="image/*">
+            <div id="referenceStatus" class="status" style="display:none;"></div>
+            <img id="referencePreview" class="reference-preview" style="display:none;">
+        </div>
+        
+        <div class="step">
+            <div class="step-title">Step 2: Upload Photo Library</div>
+            <p style="margin-bottom: 15px; color: #666;">Select all photos from your camera roll (screenshots will be filtered out)</p>
+            <label for="libraryInput" class="file-label">Choose Multiple Photos</label>
+            <input type="file" id="libraryInput" accept="image/*" multiple>
+            <div id="libraryStatus" class="status" style="display:none;"></div>
+        </div>
+        
+        <div class="step">
+            <div class="step-title">Step 3: Find Matching Photos</div>
+            <p style="margin-bottom: 15px; color: #666;">Adjust similarity threshold (lower = stricter matching)</p>
+            <div class="slider-container">
+                <label>Similarity Threshold: <span id="thresholdValue">0.75</span></label>
+                <input type="range" id="threshold" min="0.5" max="0.95" step="0.05" value="0.75">
+            </div>
+            <button id="analyzeBtn" disabled>Analyze & Match Photos</button>
+            <div id="analyzeStatus" class="status" style="display:none;"></div>
+            <div id="matchedPhotos" class="preview-grid"></div>
+        </div>
+        
+        <div class="step">
+            <div class="step-title">Step 4: Generate Timelapse</div>
+            <p style="margin-bottom: 15px; color: #666;">Create animated GIF from matched photos</p>
+            <label>Frame Delay (ms): <input type="number" id="frameDelay" value="500" min="100" max="2000" step="100" style="width: 100px; padding: 5px; margin-left: 10px;"></label>
+            <br><br>
+            <button id="generateBtn" disabled>Generate GIF</button>
+            <div id="generateStatus" class="status" style="display:none;"></div>
+            <div class="output">
+                <img id="outputGif" style="display:none;">
+                <br>
+                <a id="downloadLink" style="display:none; margin-top: 15px; display: inline-block;">Download GIF</a>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <script>
+        let referenceImage = null;
+        let libraryImages = [];
+        let matchedImages = [];
+        
+        const referenceInput = document.getElementById('referenceInput');
+        const libraryInput = document.getElementById('libraryInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const threshold = document.getElementById('threshold');
+        const thresholdValue = document.getElementById('thresholdValue');
+        
+        // Update threshold display
+        threshold.addEventListener('input', (e) => {
+            thresholdValue.textContent = e.target.value;
+        });
+        
+        // Handle reference image upload
+        referenceInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const status = document.getElementById('referenceStatus');
+            status.style.display = 'block';
+            status.textContent = 'Loading reference image...';
+            
+            referenceImage = await loadImage(file);
+            
+            const preview = document.getElementById('referencePreview');
+            preview.src = referenceImage.src;
+            preview.style.display = 'block';
+            
+            status.textContent = '✓ Reference image loaded';
+            status.style.background = '#d4edda';
+            status.style.color = '#155724';
+            
+            updateButtons();
+        });
+        
+        // Handle library upload
+        libraryInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+            
+            const status = document.getElementById('libraryStatus');
+            status.style.display = 'block';
+            status.textContent = `Loading ${files.length} images...`;
+            
+            libraryImages = [];
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const img = await loadImage(file);
+                
+                libraryImages.push({
+                    image: img,
+                    file: file,
+                    date: file.lastModified
+                });
+                
+                status.textContent = `Loaded ${i + 1}/${files.length} images`;
+            }
+            
+            status.textContent = `✓ ${libraryImages.length} images loaded`;
+            status.style.background = '#d4edda';
+            status.style.color = '#155724';
+            
+            updateButtons();
+        });
+        
+        // Analyze and match photos
+        analyzeBtn.addEventListener('click', async () => {
+            const status = document.getElementById('analyzeStatus');
+            status.style.display = 'block';
+            status.textContent = 'Analyzing images...';
+            
+            analyzeBtn.disabled = true;
+            
+            const refFeatures = extractFeatures(referenceImage);
+            matchedImages = [];
+            
+            for (let i = 0; i < libraryImages.length; i++) {
+                const libImg = libraryImages[i];
+                const libFeatures = extractFeatures(libImg.image);
+                const similarity = compareFeatures(refFeatures, libFeatures);
+                
+                if (similarity >= parseFloat(threshold.value)) {
+                    matchedImages.push({
+                        ...libImg,
+                        similarity: similarity
+                    });
+                }
+                
+                status.textContent = `Analyzing ${i + 1}/${libraryImages.length}...`;
+            }
+            
+            // Sort by date
+            matchedImages.sort((a, b) => a.date - b.date);
+            
+            status.textContent = `✓ Found ${matchedImages.length} matching photos`;
+            status.style.background = '#d4edda';
+            status.style.color = '#155724';
+            
+            // Display matched photos
+            const grid = document.getElementById('matchedPhotos');
+            grid.innerHTML = '';
+            matchedImages.forEach(item => {
+                const img = document.createElement('img');
+                img.src = item.image.src;
+                img.className = 'preview-img';
+                img.title = `Similarity: ${(item.similarity * 100).toFixed(1)}%`;
+                grid.appendChild(img);
+            });
+            
+            analyzeBtn.disabled = false;
+            updateButtons();
+        });
+        
+        // Generate GIF
+        generateBtn.addEventListener('click', async () => {
+            const status = document.getElementById('generateStatus');
+            status.style.display = 'block';
+            status.textContent = 'Generating GIF...';
+            
+            generateBtn.disabled = true;
+            
+            const delay = parseInt(document.getElementById('frameDelay').value);
+            
+            const gif = new GIF({
+                workers: 2,
+                quality: 10,
+                width: 800,
+                height: 600,
+                workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
+            });
+            
+            for (let i = 0; i < matchedImages.length; i++) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 800;
+                canvas.height = 600;
+                const ctx = canvas.getContext('2d');
+                
+                // Draw image centered and scaled
+                const img = matchedImages[i].image;
+                const scale = Math.min(800 / img.width, 600 / img.height);
+                const w = img.width * scale;
+                const h = img.height * scale;
+                const x = (800 - w) / 2;
+                const y = (600 - h) / 2;
+                
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, 800, 600);
+                ctx.drawImage(img, x, y, w, h);
+                
+                gif.addFrame(canvas, {delay: delay});
+                status.textContent = `Adding frame ${i + 1}/${matchedImages.length}...`;
+            }
+            
+            gif.on('finished', (blob) => {
+                const url = URL.createObjectURL(blob);
+                const output = document.getElementById('outputGif');
+                output.src = url;
+                output.style.display = 'block';
+                
+                const download = document.getElementById('downloadLink');
+                download.href = url;
+                download.download = 'timelapse.gif';
+                download.textContent = '⬇️ Download GIF';
+                download.style.display = 'inline-block';
+                
+                status.textContent = '✓ GIF generated successfully!';
+                status.style.background = '#d4edda';
+                status.style.color = '#155724';
+                
+                generateBtn.disabled = false;
+            });
+            
+            gif.render();
+        });
+        
+        // Helper functions
+        function loadImage(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+        
+        function extractFeatures(img) {
+            const canvas = document.createElement('canvas');
+            const size = 32; // Reduced size for feature extraction
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, size, size);
+            
+            const imageData = ctx.getImageData(0, 0, size, size);
+            const data = imageData.data;
+            
+            // Extract color histogram and edge features
+            const features = {
+                histogram: new Array(64).fill(0), // 4x4x4 RGB bins
+                edges: 0,
+                brightness: 0
+            };
+            
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                
+                // Histogram
+                const rBin = Math.floor(r / 64);
+                const gBin = Math.floor(g / 64);
+                const bBin = Math.floor(b / 64);
+                const bin = rBin * 16 + gBin * 4 + bBin;
+                features.histogram[bin]++;
+                
+                // Brightness
+                features.brightness += (r + g + b) / 3;
+                
+                // Simple edge detection
+                if (i > 0 && i < data.length - 4) {
+                    const diff = Math.abs(r - data[i - 4]) + 
+                                Math.abs(g - data[i - 3]) + 
+                                Math.abs(b - data[i - 2]);
+                    features.edges += diff;
+                }
+            }
+            
+            features.brightness /= (size * size);
+            features.edges /= (size * size);
+            
+            return features;
+        }
+        
+        function compareFeatures(f1, f2) {
+            // Normalize histograms
+            const sum1 = f1.histogram.reduce((a, b) => a + b, 0);
+            const sum2 = f2.histogram.reduce((a, b) => a + b, 0);
+            
+            // Histogram correlation
+            let correlation = 0;
+            for (let i = 0; i < f1.histogram.length; i++) {
+                const v1 = f1.histogram[i] / sum1;
+                const v2 = f2.histogram[i] / sum2;
+                correlation += Math.min(v1, v2);
+            }
+            
+            // Brightness similarity
+            const brightDiff = 1 - Math.abs(f1.brightness - f2.brightness) / 255;
+            
+            // Edge similarity
+            const edgeDiff = 1 - Math.abs(f1.edges - f2.edges) / Math.max(f1.edges, f2.edges, 1);
+            
+            // Weighted combination
+            return correlation * 0.7 + brightDiff * 0.15 + edgeDiff * 0.15;
+        }
+        
+        function updateButtons() {
+            analyzeBtn.disabled = !referenceImage || libraryImages.length === 0;
+            generateBtn.disabled = matchedImages.length === 0;
+        }
+    </script>
+</body>
+</html>
