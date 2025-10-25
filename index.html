@@ -135,6 +135,11 @@
             border-radius: 4px;
             margin-top: 15px;
         }
+        
+        .error {
+            background: #f8d7da !important;
+            color: #721c24 !important;
+        }
     </style>
 </head>
 <body>
@@ -143,18 +148,18 @@
         
         <div class="step">
             <div class="step-title">Step 1: Upload Reference Image</div>
-            <p style="margin-bottom: 15px; color: #666;">Upload one photo of your vine wall to use as reference</p>
+            <p style="margin-bottom: 15px; color: #666;">Upload one photo of your vine wall (JPEG, PNG, or DNG)</p>
             <label for="referenceInput" class="file-label">Choose Reference Photo</label>
-            <input type="file" id="referenceInput" accept="image/*">
+            <input type="file" id="referenceInput" accept="image/*,.dng">
             <div id="referenceStatus" class="status" style="display:none;"></div>
             <img id="referencePreview" class="reference-preview" style="display:none;">
         </div>
         
         <div class="step">
             <div class="step-title">Step 2: Upload Photo Library</div>
-            <p style="margin-bottom: 15px; color: #666;">Select all photos from your camera roll (screenshots will be filtered out)</p>
+            <p style="margin-bottom: 15px; color: #666;">Select all photos including DNG files</p>
             <label for="libraryInput" class="file-label">Choose Multiple Photos</label>
-            <input type="file" id="libraryInput" accept="image/*" multiple>
+            <input type="file" id="libraryInput" accept="image/*,.dng" multiple>
             <div id="libraryStatus" class="status" style="display:none;"></div>
         </div>
         
@@ -172,20 +177,20 @@
         
         <div class="step">
             <div class="step-title">Step 4: Generate Timelapse</div>
-            <p style="margin-bottom: 15px; color: #666;">Create animated GIF from matched photos</p>
+            <p style="margin-bottom: 15px; color: #666;">Create video from matched photos (sorted by capture date)</p>
             <label>Frame Delay (ms): <input type="number" id="frameDelay" value="500" min="100" max="2000" step="100" style="width: 100px; padding: 5px; margin-left: 10px;"></label>
             <br><br>
-            <button id="generateBtn" disabled>Generate GIF</button>
+            <button id="generateWebMBtn" disabled style="background: #34C759;">Generate Video</button>
             <div id="generateStatus" class="status" style="display:none;"></div>
             <div class="output">
-                <img id="outputGif" style="display:none;">
+                <video id="outputVideo" controls style="display:none; max-width: 100%; border-radius: 4px; margin-top: 15px;"></video>
                 <br>
-                <a id="downloadLink" style="display:none; margin-top: 15px; display: inline-block;">Download GIF</a>
+                <a id="downloadLink" style="display:none; margin-top: 15px; display: inline-block;">Download</a>
             </div>
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
     <script>
         let referenceImage = null;
         let libraryImages = [];
@@ -194,7 +199,7 @@
         const referenceInput = document.getElementById('referenceInput');
         const libraryInput = document.getElementById('libraryInput');
         const analyzeBtn = document.getElementById('analyzeBtn');
-        const generateBtn = document.getElementById('generateBtn');
+        const generateWebMBtn = document.getElementById('generateWebMBtn');
         const threshold = document.getElementById('threshold');
         const thresholdValue = document.getElementById('thresholdValue');
         
@@ -210,17 +215,23 @@
             
             const status = document.getElementById('referenceStatus');
             status.style.display = 'block';
+            status.classList.remove('error');
             status.textContent = 'Loading reference image...';
             
-            referenceImage = await loadImage(file);
-            
-            const preview = document.getElementById('referencePreview');
-            preview.src = referenceImage.src;
-            preview.style.display = 'block';
-            
-            status.textContent = '✓ Reference image loaded';
-            status.style.background = '#d4edda';
-            status.style.color = '#155724';
+            try {
+                referenceImage = await loadImageWithExif(file);
+                
+                const preview = document.getElementById('referencePreview');
+                preview.src = referenceImage.src;
+                preview.style.display = 'block';
+                
+                status.textContent = '✓ Reference image loaded';
+                status.style.background = '#d4edda';
+                status.style.color = '#155724';
+            } catch (error) {
+                status.textContent = `✗ Error loading image: ${error.message}`;
+                status.classList.add('error');
+            }
             
             updateButtons();
         });
@@ -232,24 +243,30 @@
             
             const status = document.getElementById('libraryStatus');
             status.style.display = 'block';
+            status.classList.remove('error');
             status.textContent = `Loading ${files.length} images...`;
             
             libraryImages = [];
             
             for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const img = await loadImage(file);
-                
-                libraryImages.push({
-                    image: img,
-                    file: file,
-                    date: file.lastModified
-                });
-                
-                status.textContent = `Loaded ${i + 1}/${files.length} images`;
+                try {
+                    const file = files[i];
+                    const imgData = await loadImageWithExif(file);
+                    
+                    libraryImages.push({
+                        image: imgData.img,
+                        file: file,
+                        date: imgData.captureDate || file.lastModified,
+                        captureDate: imgData.captureDate
+                    });
+                    
+                    status.textContent = `Loaded ${i + 1}/${files.length} images`;
+                } catch (error) {
+                    console.warn(`Failed to load ${files[i].name}:`, error);
+                }
             }
             
-            status.textContent = `✓ ${libraryImages.length} images loaded`;
+            status.textContent = `✓ ${libraryImages.length} images loaded (sorted by capture date)`;
             status.style.background = '#d4edda';
             status.style.color = '#155724';
             
@@ -260,6 +277,7 @@
         analyzeBtn.addEventListener('click', async () => {
             const status = document.getElementById('analyzeStatus');
             status.style.display = 'block';
+            status.classList.remove('error');
             status.textContent = 'Analyzing images...';
             
             analyzeBtn.disabled = true;
@@ -282,106 +300,212 @@
                 status.textContent = `Analyzing ${i + 1}/${libraryImages.length}...`;
             }
             
-            // Sort by date
+            // Sort by capture date
             matchedImages.sort((a, b) => a.date - b.date);
             
-            status.textContent = `✓ Found ${matchedImages.length} matching photos`;
+            status.textContent = `✓ Found ${matchedImages.length} matching photos (sorted chronologically)`;
             status.style.background = '#d4edda';
             status.style.color = '#155724';
             
             // Display matched photos
             const grid = document.getElementById('matchedPhotos');
             grid.innerHTML = '';
-            matchedImages.forEach(item => {
+            matchedImages.forEach((item, idx) => {
+                const container = document.createElement('div');
+                container.style.position = 'relative';
+                
                 const img = document.createElement('img');
                 img.src = item.image.src;
                 img.className = 'preview-img';
-                img.title = `Similarity: ${(item.similarity * 100).toFixed(1)}%`;
-                grid.appendChild(img);
+                
+                const dateStr = item.captureDate ? 
+                    new Date(item.captureDate).toLocaleDateString() : 
+                    'No date';
+                img.title = `#${idx + 1} - ${dateStr}\nSimilarity: ${(item.similarity * 100).toFixed(1)}%`;
+                
+                container.appendChild(img);
+                grid.appendChild(container);
             });
             
             analyzeBtn.disabled = false;
             updateButtons();
         });
         
-        // Generate GIF
-        generateBtn.addEventListener('click', async () => {
+        // Generate WebM video
+        generateWebMBtn.addEventListener('click', async () => {
             const status = document.getElementById('generateStatus');
             status.style.display = 'block';
-            status.textContent = 'Generating GIF...';
+            status.classList.remove('error');
+            status.textContent = 'Generating video...';
             
-            generateBtn.disabled = true;
+            generateWebMBtn.disabled = true;
             
-            const delay = parseInt(document.getElementById('frameDelay').value);
-            
-            const gif = new GIF({
-                workers: 2,
-                quality: 10,
-                width: 800,
-                height: 600,
-                workerScript: 'https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js'
-            });
-            
-            for (let i = 0; i < matchedImages.length; i++) {
+            try {
+                const delay = parseInt(document.getElementById('frameDelay').value);
                 const canvas = document.createElement('canvas');
                 canvas.width = 800;
                 canvas.height = 600;
                 const ctx = canvas.getContext('2d');
                 
-                // Draw image centered and scaled
-                const img = matchedImages[i].image;
-                const scale = Math.min(800 / img.width, 600 / img.height);
-                const w = img.width * scale;
-                const h = img.height * scale;
-                const x = (800 - w) / 2;
-                const y = (600 - h) / 2;
+                const stream = canvas.captureStream(30);
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm;codecs=vp9',
+                    videoBitsPerSecond: 2500000
+                });
                 
-                ctx.fillStyle = '#000';
-                ctx.fillRect(0, 0, 800, 600);
-                ctx.drawImage(img, x, y, w, h);
+                const chunks = [];
+                mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const output = document.getElementById('outputVideo');
+                    output.src = url;
+                    output.style.display = 'block';
+                    
+                    const download = document.getElementById('downloadLink');
+                    download.href = url;
+                    download.download = 'timelapse.webm';
+                    download.textContent = '⬇️ Download Video';
+                    download.style.display = 'inline-block';
+                    
+                    status.textContent = '✓ Video generated successfully!';
+                    status.style.background = '#d4edda';
+                    status.style.color = '#155724';
+                    
+                    generateWebMBtn.disabled = false;
+                };
                 
-                gif.addFrame(canvas, {delay: delay});
-                status.textContent = `Adding frame ${i + 1}/${matchedImages.length}...`;
+                mediaRecorder.start();
+                
+                for (let i = 0; i < matchedImages.length; i++) {
+                    const img = matchedImages[i].image;
+                    const scale = Math.min(800 / img.width, 600 / img.height);
+                    const w = img.width * scale;
+                    const h = img.height * scale;
+                    const x = (800 - w) / 2;
+                    const y = (600 - h) / 2;
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(0, 0, 800, 600);
+                    ctx.drawImage(img, x, y, w, h);
+                    
+                    status.textContent = `Recording frame ${i + 1}/${matchedImages.length}...`;
+                    
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+                
+                mediaRecorder.stop();
+                
+            } catch (error) {
+                status.textContent = `✗ Error: ${error.message}`;
+                status.classList.add('error');
+                generateWebMBtn.disabled = false;
             }
-            
-            gif.on('finished', (blob) => {
-                const url = URL.createObjectURL(blob);
-                const output = document.getElementById('outputGif');
-                output.src = url;
-                output.style.display = 'block';
-                
-                const download = document.getElementById('downloadLink');
-                download.href = url;
-                download.download = 'timelapse.gif';
-                download.textContent = '⬇️ Download GIF';
-                download.style.display = 'inline-block';
-                
-                status.textContent = '✓ GIF generated successfully!';
-                status.style.background = '#d4edda';
-                status.style.color = '#155724';
-                
-                generateBtn.disabled = false;
-            });
-            
-            gif.render();
         });
         
         // Helper functions
-        function loadImage(file) {
-            return new Promise((resolve) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    const img = new Image();
-                    img.onload = () => resolve(img);
-                    img.src = e.target.result;
-                };
-                reader.readAsDataURL(file);
+        async function loadImageWithExif(file) {
+            return new Promise((resolve, reject) => {
+                const isDNG = file.name.toLowerCase().endsWith('.dng');
+                
+                if (isDNG) {
+                    // For DNG files, try to extract embedded JPEG preview
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const arrayBuffer = e.target.result;
+                        const bytes = new Uint8Array(arrayBuffer);
+                        
+                        // Look for JPEG marker (FF D8 FF) in DNG file
+                        let jpegStart = -1;
+                        let jpegEnd = -1;
+                        
+                        for (let i = 0; i < bytes.length - 1; i++) {
+                            if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8) {
+                                jpegStart = i;
+                                break;
+                            }
+                        }
+                        
+                        if (jpegStart !== -1) {
+                            for (let i = jpegStart + 2; i < bytes.length - 1; i++) {
+                                if (bytes[i] === 0xFF && bytes[i + 1] === 0xD9) {
+                                    jpegEnd = i + 2;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (jpegStart !== -1 && jpegEnd !== -1) {
+                            const jpegBytes = bytes.slice(jpegStart, jpegEnd);
+                            const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+                            const url = URL.createObjectURL(blob);
+                            
+                            const img = new Image();
+                            img.onload = () => {
+                                // Extract EXIF data
+                                EXIF.getData(img, function() {
+                                    const captureDate = getExifDate(this);
+                                    resolve({ img, captureDate });
+                                });
+                            };
+                            img.onerror = () => reject(new Error('Failed to load DNG preview'));
+                            img.src = url;
+                        } else {
+                            reject(new Error('No JPEG preview found in DNG file'));
+                        }
+                    };
+                    reader.onerror = () => reject(new Error('Failed to read DNG file'));
+                    reader.readAsArrayBuffer(file);
+                } else {
+                    // For regular images
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            EXIF.getData(img, function() {
+                                const captureDate = getExifDate(this);
+                                resolve({ img, captureDate });
+                            });
+                        };
+                        img.onerror = () => reject(new Error('Failed to load image'));
+                        img.src = e.target.result;
+                    };
+                    reader.onerror = () => reject(new Error('Failed to read file'));
+                    reader.readAsDataURL(file);
+                }
             });
+        }
+        
+        function getExifDate(img) {
+            // Try multiple EXIF date fields
+            const dateFields = [
+                'DateTimeOriginal',
+                'DateTimeDigitized', 
+                'DateTime'
+            ];
+            
+            for (const field of dateFields) {
+                const dateStr = EXIF.getTag(img, field);
+                if (dateStr) {
+                    // EXIF date format: "YYYY:MM:DD HH:MM:SS"
+                    const parts = dateStr.split(' ');
+                    const datePart = parts[0].replace(/:/g, '-');
+                    const timePart = parts[1] || '00:00:00';
+                    const date = new Date(`${datePart}T${timePart}`);
+                    
+                    if (!isNaN(date.getTime())) {
+                        return date.getTime();
+                    }
+                }
+            }
+            
+            return null;
         }
         
         function extractFeatures(img) {
             const canvas = document.createElement('canvas');
-            const size = 32; // Reduced size for feature extraction
+            const size = 32;
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
@@ -390,9 +514,8 @@
             const imageData = ctx.getImageData(0, 0, size, size);
             const data = imageData.data;
             
-            // Extract color histogram and edge features
             const features = {
-                histogram: new Array(64).fill(0), // 4x4x4 RGB bins
+                histogram: new Array(64).fill(0),
                 edges: 0,
                 brightness: 0
             };
@@ -402,17 +525,14 @@
                 const g = data[i + 1];
                 const b = data[i + 2];
                 
-                // Histogram
                 const rBin = Math.floor(r / 64);
                 const gBin = Math.floor(g / 64);
                 const bBin = Math.floor(b / 64);
                 const bin = rBin * 16 + gBin * 4 + bBin;
                 features.histogram[bin]++;
                 
-                // Brightness
                 features.brightness += (r + g + b) / 3;
                 
-                // Simple edge detection
                 if (i > 0 && i < data.length - 4) {
                     const diff = Math.abs(r - data[i - 4]) + 
                                 Math.abs(g - data[i - 3]) + 
@@ -428,11 +548,9 @@
         }
         
         function compareFeatures(f1, f2) {
-            // Normalize histograms
             const sum1 = f1.histogram.reduce((a, b) => a + b, 0);
             const sum2 = f2.histogram.reduce((a, b) => a + b, 0);
             
-            // Histogram correlation
             let correlation = 0;
             for (let i = 0; i < f1.histogram.length; i++) {
                 const v1 = f1.histogram[i] / sum1;
@@ -440,19 +558,15 @@
                 correlation += Math.min(v1, v2);
             }
             
-            // Brightness similarity
             const brightDiff = 1 - Math.abs(f1.brightness - f2.brightness) / 255;
-            
-            // Edge similarity
             const edgeDiff = 1 - Math.abs(f1.edges - f2.edges) / Math.max(f1.edges, f2.edges, 1);
             
-            // Weighted combination
             return correlation * 0.7 + brightDiff * 0.15 + edgeDiff * 0.15;
         }
         
         function updateButtons() {
             analyzeBtn.disabled = !referenceImage || libraryImages.length === 0;
-            generateBtn.disabled = matchedImages.length === 0;
+            generateWebMBtn.disabled = matchedImages.length === 0;
         }
     </script>
 </body>
