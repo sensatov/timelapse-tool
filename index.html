@@ -405,59 +405,59 @@
             }
         });
         
+        // Vercel conversion endpoint
+        const VERCEL_CONVERTER_URL = 'https://dng-converter-r5482a77i-sensatovs-projects.vercel.app/api/convert-dng';
+        
         // Helper functions
         async function loadImageWithExif(file) {
-            return new Promise((resolve, reject) => {
+            return new Promise(async (resolve, reject) => {
                 const isDNG = file.name.toLowerCase().endsWith('.dng');
                 
                 if (isDNG) {
-                    // For DNG files, try to extract embedded JPEG preview
+                    // Send DNG to Vercel for conversion
+                    console.log(`Sending ${file.name} to server for conversion...`);
+                    
                     const reader = new FileReader();
-                    reader.onload = (e) => {
-                        const arrayBuffer = e.target.result;
-                        const bytes = new Uint8Array(arrayBuffer);
-                        
-                        // Look for JPEG marker (FF D8 FF) in DNG file
-                        let jpegStart = -1;
-                        let jpegEnd = -1;
-                        
-                        for (let i = 0; i < bytes.length - 1; i++) {
-                            if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8) {
-                                jpegStart = i;
-                                break;
-                            }
-                        }
-                        
-                        if (jpegStart !== -1) {
-                            for (let i = jpegStart + 2; i < bytes.length - 1; i++) {
-                                if (bytes[i] === 0xFF && bytes[i + 1] === 0xD9) {
-                                    jpegEnd = i + 2;
-                                    break;
-                                }
-                            }
-                        }
-                        
-                        if (jpegStart !== -1 && jpegEnd !== -1) {
-                            const jpegBytes = bytes.slice(jpegStart, jpegEnd);
-                            const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-                            const url = URL.createObjectURL(blob);
+                    reader.onload = async (e) => {
+                        try {
+                            const response = await fetch(VERCEL_CONVERTER_URL, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    file: e.target.result,
+                                    filename: file.name
+                                })
+                            });
                             
+                            if (!response.ok) {
+                                const error = await response.json();
+                                throw new Error(error.details || 'Conversion failed');
+                            }
+                            
+                            const data = await response.json();
+                            console.log(`✓ Converted ${file.name} (${(data.size / 1024).toFixed(1)}KB)`);
+                            
+                            // Load the converted JPEG
                             const img = new Image();
                             img.onload = () => {
-                                // Extract EXIF data
                                 EXIF.getData(img, function() {
                                     const captureDate = getExifDate(this);
+                                    console.log('EXIF date:', captureDate ? new Date(captureDate) : 'not found');
                                     resolve({ img, captureDate });
                                 });
                             };
-                            img.onerror = () => reject(new Error('Failed to load DNG preview'));
-                            img.src = url;
-                        } else {
-                            reject(new Error('No JPEG preview found in DNG file'));
+                            img.onerror = () => reject(new Error('Failed to load converted image'));
+                            img.src = data.image;
+                            
+                        } catch (error) {
+                            console.error('Server conversion error:', error);
+                            reject(new Error(`Server conversion failed: ${error.message}`));
                         }
                     };
                     reader.onerror = () => reject(new Error('Failed to read DNG file'));
-                    reader.readAsArrayBuffer(file);
+                    reader.readAsDataURL(file);
                 } else {
                     // For regular images
                     const reader = new FileReader();
