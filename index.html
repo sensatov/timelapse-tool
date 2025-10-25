@@ -219,7 +219,8 @@
             status.textContent = 'Loading reference image...';
             
             try {
-                referenceImage = await loadImageWithExif(file);
+                const imgData = await loadImageWithExif(file);
+                referenceImage = imgData.img;
                 
                 const preview = document.getElementById('referencePreview');
                 preview.src = referenceImage.src;
